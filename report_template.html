@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>__REPORT_TITLE__</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px; background: #f8f9fa; color: #333; }
+        h1 { margin-bottom: 2px; }
+        .gen-time { color: #6c757d; font-size: 14px; margin-top: 0; margin-bottom: 20px; }
+        .controls { margin-bottom: 20px; }
+        button { padding: 8px 16px; margin-right: 8px; font-size: 14px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; }
+        button.active { background: #007bff; color: white; border-color: #007bff; }
+        .chart-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 25px; box-sizing: border-box; }
+        canvas { max-height: 320px; width: 100% !important; }
+
+        @media print {
+            @page {
+                size: auto;
+                margin: 10mm;
+            }
+            body {
+                background: white;
+                margin: 0;
+                padding: 0;
+            }
+            .chart-container {
+                box-shadow: none;
+                border: 1px solid #e0e0e0;
+                padding: 10px;
+                margin-bottom: 15px;
+                width: 100% !important;
+                max-width: 100% !important;
+                page-break-inside: avoid; /* Keeps full chart from splitting across pages */
+                break-inside: avoid;
+            }
+            canvas {
+                max-width: 100% !important;
+                height: auto !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>__REPORT_TITLE__</h1>
+    <p class="gen-time">Generated on __GENERATED_AT__</p>
+
+    <div class="controls">
+        <span>Timeframe: </span>
+        <button id="btn-1h" class="active" onclick="updateTimeframe(1, 'btn-1h')">1 Hour</button>
+        <button id="btn-24h" onclick="updateTimeframe(24, 'btn-24h')">24 Hours</button>
+        <button id="btn-3d" onclick="updateTimeframe(72, 'btn-3d')">3 Days</button>
+        <button id="btn-7d" onclick="updateTimeframe(168, 'btn-7d')">7 Days</button>
+    </div>
+
+    <div class="chart-container"><canvas id="speedChart"></canvas></div>
+    <div class="chart-container"><canvas id="latencyChart"></canvas></div>
+    <div class="chart-container"><canvas id="lossChart"></canvas></div>
+    <div class="chart-container"><canvas id="dnsChart"></canvas></div>
+
+    <script>
+        const pingData = __PING_DATA__;
+        const dnsData = __DNS_DATA__;
+        const speedData = __SPEED_DATA__;
+        const GAP_THRESHOLD = __GAP_THRESHOLD__;
+
+        let speedChart, latencyChart, lossChart, dnsChart;
+
+        function filterByHours(data, hours) {
+            const cutoff = new Date(new Date().getTime() - (hours * 60 * 60 * 1000));
+            return data.filter(d => new Date(d.x) >= cutoff);
+        }
+
+        function buildCharts(hours) {
+            const now = new Date();
+            const cutoff = new Date(now.getTime() - (hours * 60 * 60 * 1000));
+
+            const pData = filterByHours(pingData, hours);
+            const dData = filterByHours(dnsData, hours);
+            const sData = filterByHours(speedData, hours);
+
+            const targets = [...new Set(pData.map(item => item.target))];
+
+            const isMultiDay = hours > 24;
+            const timeAxisConfig = {
+                type: 'time',
+                time: {
+                    tooltipFormat: 'yyyy-MM-dd HH:mm:ss',
+                    displayFormats: {
+                        minute: isMultiDay ? 'MMM d, HH:mm' : 'HH:mm',
+                        hour: isMultiDay ? 'MMM d, HH:mm' : 'HH:mm',
+                        day: 'MMM d'
+                    }
+                },
+                min: cutoff,
+                max: now,
+                title: { display: true, text: 'Time' }
+            };
+
+            if (speedChart) speedChart.destroy();
+            if (latencyChart) latencyChart.destroy();
+            if (lossChart) lossChart.destroy();
+            if (dnsChart) dnsChart.destroy();
+
+            // 1. Bandwidth Speed Test Chart (Line Graph)
+            speedChart = new Chart(document.getElementById('speedChart'), {
+                type: 'line',
+                data: {
+                    datasets: [
+                        { 
+                            label: 'Download (Mbps)', 
+                            data: sData.map(d => ({ x: d.x, y: d.download })), 
+                            borderColor: '#28a745', 
+                            borderWidth: 2, 
+                            fill: false, 
+                            pointRadius: 3,
+                            spanGaps: true
+                        },
+                        { 
+                            label: 'Upload (Mbps)', 
+                            data: sData.map(d => ({ x: d.x, y: d.upload })), 
+                            borderColor: '#17a2b8', 
+                            borderWidth: 2, 
+                            fill: false, 
+                            pointRadius: 3,
+                            spanGaps: true
+                        }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    animation: false,
+                    plugins: { title: { display: true, text: 'ISP Bandwidth Speed Tests (Mbps)' } },
+                    scales: { x: timeAxisConfig }
+                }
+            });
+
+            // 2. Latency Chart
+            const latencyDatasets = targets.map((target, idx) => ({
+                label: target + ' Latency (ms)',
+                data: pData.filter(d => d.target === target).map(d => ({ x: d.x, y: d.latency })),
+                borderColor: ['#007bff', '#28a745', '#dc3545', '#ffc107'][idx % 4],
+                borderWidth: 2, fill: false, pointRadius: 1,
+                spanGaps: GAP_THRESHOLD
+            }));
+
+            latencyChart = new Chart(document.getElementById('latencyChart'), {
+                type: 'line', 
+                data: { datasets: latencyDatasets },
+                options: { 
+                    responsive: true, 
+                    animation: false,
+                    plugins: { title: { display: true, text: 'Round-Trip Latency (ms)' } },
+                    scales: { x: timeAxisConfig }
+                }
+            });
+
+            // 3. Loss Chart
+            const lossDatasets = targets.map((target, idx) => ({
+                label: target + ' Loss (%)',
+                data: pData.filter(d => d.target === target).map(d => ({ x: d.x, y: d.loss })),
+                borderColor: ['#007bff', '#28a745', '#dc3545', '#ffc107'][idx % 4],
+                borderWidth: 1.5, fill: false, pointRadius: 1,
+                spanGaps: GAP_THRESHOLD
+            }));
+
+            lossChart = new Chart(document.getElementById('lossChart'), {
+                type: 'line', 
+                data: { datasets: lossDatasets },
+                options: { 
+                    responsive: true, 
+                    animation: false,
+                    plugins: { title: { display: true, text: 'Packet Loss (%)' } },
+                    scales: { x: timeAxisConfig }
+                }
+            });
+
+            // 4. DNS Chart
+            dnsChart = new Chart(document.getElementById('dnsChart'), {
+                type: 'line',
+                data: {
+                    datasets: [{ 
+                        label: 'DNS Speed (ms)', 
+                        data: dData.map(d => ({ x: d.x, y: d.lookup_ms })), 
+                        borderColor: '#6f42c1', borderWidth: 1.5, fill: false, pointRadius: 1,
+                        spanGaps: GAP_THRESHOLD
+                    }]
+                },
+                options: { 
+                    responsive: true, 
+                    animation: false,
+                    plugins: { title: { display: true, text: 'DNS Resolution Speed (ms)' } },
+                    scales: { x: timeAxisConfig }
+                }
+            });
+        }
+
+        function updateTimeframe(hours, btnId) {
+            // Step 1: Set body and buttons to wait cursor
+            document.body.style.cursor = 'wait';
+            document.querySelectorAll('button').forEach(b => {
+                b.style.cursor = 'wait';
+                b.classList.remove('active');
+            });
+            document.getElementById(btnId).classList.add('active');
+
+            // Step 2: Yield execution briefly so browser repaints cursor to 'wait'
+            setTimeout(() => {
+                buildCharts(hours);
+
+                // Step 3: Revert cursor back to default once execution completes
+                document.body.style.cursor = 'default';
+                document.querySelectorAll('button').forEach(b => b.style.cursor = 'pointer');
+            }, 50);
+        }
+
+        // Render default 1h view on load
+        window.onload = () => buildCharts(1);
+    </script>
+</body>
+</html>
