@@ -3,4 +3,5 @@ network_monitor.db
 *.db-journal
 *.swp
 network_report.html
+speedtest.exe
 
